@@ -1,12 +1,12 @@
 #include <OneWire.h>
 #include <Adafruit_GFX.h>
 #include <MCUFRIEND_kbv.h>
+#include <DallasTemperature.h>
+#include <TouchScreen.h>
 
 MCUFRIEND_kbv tft;
 
-#include <DallasTemperature.h>
 
-#include <TouchScreen.h>
 #define MINPRESSURE 200
 #define MAXPRESSURE 1000
 
@@ -21,6 +21,8 @@ MCUFRIEND_kbv tft;
 #define OUT_6 49
 #define OUT_2 51
 #define OUT_8 53
+
+#define TEMP_RES 12
 
 #define BLACK 0x0000
 #define BLUE 0x001F
@@ -63,14 +65,16 @@ float lower_limit_4;
 float upper_limit_5;
 float lower_limit_5;
 
-bool err = false;
+int delayInMillis = 0;
+unsigned long lastTempReq = 0;
+
 int active_tile = 2;
 
-
-
-
-uint8_t sensor_1[8] = { 0x28, 0x02, 0x00, 0x07, 0x43, 0x3A, 0x01, 0xB7 };
-uint8_t sensor_2[8] = { 0x28, 0xFF, 0x9B, 0x7F, 0x31, 0x18, 0x01, 0x0C };
+// array to store temp values by index of sensor
+float tempByIndex[2] = {0, 0};
+// sensor address
+DeviceAddress sensor_1 = { 0x28, 0x02, 0x00, 0x07, 0x43, 0x3A, 0x01, 0xB7 };
+DeviceAddress sensor_2 = { 0x28, 0xFF, 0x9B, 0x7F, 0x31, 0x18, 0x01, 0x0C };
 
 
 
@@ -102,11 +106,18 @@ void setTextWrap(boolean w);
 
 
 void setup(void) {
+
+  // initialize sensors, set resolution, set async mode
+  sensors.begin();
+  sensors.setResolution(sensor_1, TEMP_RES);
+  sensors.setResolution(sensor_2, TEMP_RES);
+  sensors.setWaitForConversion(false);
+  sensors.requestTemperatures();
+  delayInMillis = 750 / (1 << (12 - TEMP_RES));
+  lastTempReq = millis();
+
   uint16_t ID = tft.readID();
   if (ID == 0xD3D3) ID = 0x9486;  // write-only shield
-  sensors.begin();
-  sensors.setResolution(sensor_1, 12);
-  sensors.setResolution(sensor_2, 12);
   tft.begin(ID);
   tft.setRotation(1);
   tft.fillScreen(BLACK);
@@ -131,8 +142,6 @@ void setup(void) {
   down_btn.initButton(&tft, 40, 180, 60, 60, RED, RED, WHITE, "-", 4);
   up_btn.initButton(&tft, 440, 180, 60, 60, RED, RED, WHITE, "+", 4);
 
-
-
   up_btn.drawButton(false);
   down_btn.drawButton(false);
   mainLoop();
@@ -144,6 +153,13 @@ void loop(void) {
   down_btn.press(down && down_btn.contains(pixel_x, pixel_y));
   up_btn.press(down && up_btn.contains(pixel_x, pixel_y));
 
+  if (millis() - lastTempReq >= delayInMillis){
+     tempByIndex[0] = sensors.getTempC(sensor_1);
+     tempByIndex[1] = sensors.getTempC(sensor_2);
+     mainLoop();
+     sensors.requestTemperatures();
+     lastTempReq = millis();
+  }
 
   if (down_btn.justReleased()) {
     down_btn.drawButton();
@@ -166,35 +182,18 @@ void loop(void) {
   
 }
 
-
-float checkTemperature(DeviceAddress deviceAddress) {
-  float tempC = sensors.getTempC(deviceAddress);
-  if (tempC == DEVICE_DISCONNECTED_C) {
-
-    return -127;
-  }
-  return tempC;
-}
-
-
-void printTemperature(DeviceAddress deviceAddress, int panel_no) {
+void printTemperature(float tempC, int panel_no) {
   tft.setCursor((screenDivided_x / 2 - 150), 180);
   tft.setTextColor(WHITE, BLACK);
   tft.setTextWrap(false);
-  float tempC = sensors.getTempC(deviceAddress);
-  if (tempC == DEVICE_DISCONNECTED_C) {
-    if (err == true) {
-      return;
-    }
+  if (tempC == DEVICE_DISCONNECTED_C){
     drawPanel(panel_no);
     tft.setTextSize(5);
     tft.setCursor((screenDivided_x / 2 - 130), 190);
     tft.print("ODSPOJEN");
-    err = true;
   } else {
     tft.setTextSize(10);
     tft.print(tempC);
-    err = false;
   }
 }
 
@@ -264,8 +263,6 @@ void drawPanel(int tileLocation) {
 
 void mainLoop() {
 
-  sensors.requestTemperatures();
-
   if (redraw == true) {
     drawPanel(active_tile);
     redraw = false;
@@ -273,10 +270,10 @@ void mainLoop() {
 
   switch (active_tile) {
     case 1:
-      printTemperature(sensor_1, 1);
+      printTemperature(tempByIndex[0], 1);
       break;
     case 2:
-      printTemperature(sensor_2, 2);
+      printTemperature(tempByIndex[1], 2);
       break;
   }
 }
